@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CassandraService } from '../cassandra/cassandra.service';
 import { Client } from 'pg';
+import { TrackFullTelemetryDto } from './dto/track-event.dto';
 
 @Injectable()
 export class AnalyticsService {
@@ -39,6 +40,11 @@ export class AnalyticsService {
     return {
       status: 'online',
       timestamp: new Date().toISOString(),
+      cassandraConnected: this.cassandraService.getIsConnected(),
+      connectionType: this.cassandraService.getConnectionType(),
+      message: this.cassandraService.getIsConnected()
+        ? `Connected to Cassandra (${this.cassandraService.getConnectionType()})`
+        : 'Cassandra connection pending',
       cassandra: {
         connected: this.cassandraService.getIsConnected(),
         type: this.cassandraService.getConnectionType(),
@@ -136,6 +142,106 @@ export class AnalyticsService {
     } catch (error: any) {
       this.logger.error(`Error building summary: ${error.message}`);
       return { isConnected: true, error: error.message, summary: null };
+    }
+  }
+
+  async trackTelemetry(dto: TrackFullTelemetryDto) {
+    const timestamp = new Date().toISOString();
+    const date = timestamp.slice(0, 10);
+    const eventId = this.cassandraService.generateUuid();
+    const pagePath = dto.pagePath || '/';
+    const visitorId = dto.visitorId || 'anon_visitor';
+    const sessionId = dto.sessionId || 'anon_session';
+    const db = this.cassandraService.getDb();
+
+    if (!this.cassandraService.getIsConnected() || !db || this.cassandraService.getConnectionType() !== 'ASTRA_DATA_API') {
+      this.logger.debug(`[Standby Track] ${pagePath} | Visitor: ${visitorId}`);
+      return { success: true, status: 'standby', eventId };
+    }
+
+    try {
+      await db.collection('page_views').insertOne({
+        _id: eventId,
+        eventId,
+        pagePath,
+        timestamp,
+        date,
+        visitorId,
+        sessionId,
+        deviceType: dto.deviceType || 'Desktop',
+        browser: dto.browser || 'Unknown',
+        os: dto.os || 'Unknown',
+        referrer: dto.referrer || '',
+        utmSource: dto.utmSource || '',
+        utmMedium: dto.utmMedium || '',
+        source: 'travel-main',
+      });
+
+      await Promise.all([
+        db.collection('visitors').updateOne(
+          { _id: visitorId },
+          {
+            $set: { visitorId, lastSeen: timestamp, source: 'travel-main' },
+            $setOnInsert: { firstSeen: timestamp },
+          },
+          { upsert: true },
+        ),
+        db.collection('sessions').updateOne(
+          { _id: sessionId },
+          {
+            $set: {
+              sessionId,
+              visitorId,
+              endTime: dto.endTime || timestamp,
+              durationSeconds: dto.durationSeconds || 0,
+              lastActive: timestamp,
+              source: 'travel-main',
+            },
+            $setOnInsert: { startTime: dto.startTime || timestamp },
+          },
+          { upsert: true },
+        ),
+      ]);
+
+      if (dto.hotelId) {
+        await db.collection('hotel_views').insertOne({
+          _id: eventId,
+          eventId,
+          hotelId: dto.hotelId,
+          visitorId,
+          sessionId,
+          pagePath,
+          timestamp,
+          date,
+          source: 'travel-main',
+        });
+      }
+
+      if (dto.searchLocation) {
+        await db.collection('search_events').insertOne({
+          _id: eventId,
+          eventId,
+          searchLocation: dto.searchLocation,
+          checkInDate: dto.checkInDate || '',
+          checkOutDate: dto.checkOutDate || '',
+          visitorId,
+          sessionId,
+          timestamp,
+          date,
+          source: 'travel-main',
+        });
+      }
+
+      await db.collection('daily_page_counts').updateOne(
+        { _id: `${pagePath}_${date}` },
+        { $set: { pagePath, date }, $inc: { views: 1 } },
+        { upsert: true },
+      );
+
+      return { success: true, eventId };
+    } catch (error: any) {
+      this.logger.error(`Error saving telemetry to Cassandra: ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
+import { TrackFullTelemetryDto } from './dto/track-event.dto';
 
 @Controller('analytics')
 export class AnalyticsController {
@@ -13,6 +14,16 @@ export class AnalyticsController {
   @Get('summary')
   getDashboardSummary() {
     return this.analyticsService.getDashboardSummary();
+  }
+
+  @Get('dashboard-summary')
+  getLegacyDashboardSummary() {
+    return this.analyticsService.getDashboardSummary();
+  }
+
+  @Post('track')
+  trackTelemetry(@Body() dto: TrackFullTelemetryDto) {
+    return this.analyticsService.trackTelemetry(dto);
   }
 
   @Get('page-views')
