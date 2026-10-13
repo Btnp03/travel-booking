@@ -32,6 +32,8 @@ export declare class AnalyticsController {
             latestSearchEvents: any[];
             deviceBreakdown: {};
             browserBreakdown: {};
+            topPages?: undefined;
+            activity?: undefined;
             latestSessions?: undefined;
         };
         connectionType?: undefined;
@@ -58,6 +60,24 @@ export declare class AnalyticsController {
             totalSearchEvents: number;
             deviceBreakdown: Record<string, number>;
             browserBreakdown: Record<string, number>;
+            topPages: {
+                path: string;
+                views: number;
+            }[];
+            activity: {
+                daily: {
+                    label: string;
+                    views: number;
+                }[];
+                monthly: {
+                    label: string;
+                    views: number;
+                }[];
+                yearly: {
+                    label: string;
+                    views: number;
+                }[];
+            };
             latestPageViews: any[];
             latestHotelViews: any[];
             latestSearchEvents: any[];
@@ -74,16 +94,18 @@ export declare class AnalyticsController {
         connectionType?: undefined;
     }>;
     getPageViews(): Promise<import("@datastax/astra-db-ts").WithSim<import("@datastax/astra-db-ts").FoundDoc<import("@datastax/astra-db-ts").SomeDoc>>[]>;
+    recordPageView(event: Record<string, unknown>): Promise<{
+        success: boolean;
+        message: string;
+        eventId?: undefined;
+        timestamp?: undefined;
+    } | {
+        success: boolean;
+        eventId: string;
+        timestamp: string;
+        message?: undefined;
+    }>;
     getVisitors(): Promise<import("@datastax/astra-db-ts").WithSim<import("@datastax/astra-db-ts").FoundDoc<import("@datastax/astra-db-ts").SomeDoc>>[]>;
     getSearchEvents(): Promise<import("@datastax/astra-db-ts").WithSim<import("@datastax/astra-db-ts").FoundDoc<import("@datastax/astra-db-ts").SomeDoc>>[]>;
     getHotelViews(): Promise<import("@datastax/astra-db-ts").WithSim<import("@datastax/astra-db-ts").FoundDoc<import("@datastax/astra-db-ts").SomeDoc>>[]>;
-    seedDemoData(): Promise<{
-        success: boolean;
-        message: string;
-        sample?: undefined;
-    } | {
-        success: boolean;
-        message: string;
-        sample: any[];
-    }>;
 }

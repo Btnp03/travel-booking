@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 
 @Controller('analytics')
@@ -20,6 +20,15 @@ export class AnalyticsController {
     return this.analyticsService.getPageViews();
   }
 
+  /**
+   * Public telemetry endpoint for the travel site.  Call this whenever a
+   * visitor opens a route; the API supplies the event id and timestamp.
+   */
+  @Post('page-views')
+  recordPageView(@Body() event: Record<string, unknown>) {
+    return this.analyticsService.recordPageView(event);
+  }
+
   @Get('visitors')
   getVisitors() {
     return this.analyticsService.getVisitors();
@@ -35,8 +44,4 @@ export class AnalyticsController {
     return this.analyticsService.getHotelViews();
   }
 
-  @Post('seed-demo')
-  seedDemoData() {
-    return this.analyticsService.seedDemoData();
-  }
 }

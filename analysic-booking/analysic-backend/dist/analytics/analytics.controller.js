@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AnalyticsController = void 0;
 const common_1 = require("@nestjs/common");
@@ -25,6 +28,9 @@ let AnalyticsController = class AnalyticsController {
     getPageViews() {
         return this.analyticsService.getPageViews();
     }
+    recordPageView(event) {
+        return this.analyticsService.recordPageView(event);
+    }
     getVisitors() {
         return this.analyticsService.getVisitors();
     }
@@ -33,9 +39,6 @@ let AnalyticsController = class AnalyticsController {
     }
     getHotelViews() {
         return this.analyticsService.getHotelViews();
-    }
-    seedDemoData() {
-        return this.analyticsService.seedDemoData();
     }
 };
 exports.AnalyticsController = AnalyticsController;
@@ -58,6 +61,13 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AnalyticsController.prototype, "getPageViews", null);
 __decorate([
+    (0, common_1.Post)('page-views'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AnalyticsController.prototype, "recordPageView", null);
+__decorate([
     (0, common_1.Get)('visitors'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
@@ -75,12 +85,6 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], AnalyticsController.prototype, "getHotelViews", null);
-__decorate([
-    (0, common_1.Post)('seed-demo'),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", void 0)
-], AnalyticsController.prototype, "seedDemoData", null);
 exports.AnalyticsController = AnalyticsController = __decorate([
     (0, common_1.Controller)('analytics'),
     __metadata("design:paramtypes", [analytics_service_1.AnalyticsService])

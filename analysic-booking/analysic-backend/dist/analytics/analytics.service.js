@@ -85,19 +85,23 @@ let AnalyticsService = AnalyticsService_1 = class AnalyticsService {
         }
         try {
             const [pageViews, sessions, visitors, hotelViews, searchEvents] = await Promise.all([
-                db.collection('page_views').find({}, { limit: 100 }).toArray().catch(() => []),
-                db.collection('sessions').find({}, { limit: 100 }).toArray().catch(() => []),
-                db.collection('visitors').find({}, { limit: 100 }).toArray().catch(() => []),
-                db.collection('hotel_views').find({}, { limit: 100 }).toArray().catch(() => []),
-                db.collection('search_events').find({}, { limit: 100 }).toArray().catch(() => []),
+                db.collection('page_views').find({ source: 'travel-main' }, { limit: 1000 }).toArray().catch(() => []),
+                db.collection('sessions').find({ source: 'travel-main' }, { limit: 1000 }).toArray().catch(() => []),
+                db.collection('visitors').find({ source: 'travel-main' }, { limit: 1000 }).toArray().catch(() => []),
+                db.collection('hotel_views').find({}, { limit: 1000 }).toArray().catch(() => []),
+                db.collection('search_events').find({}, { limit: 1000 }).toArray().catch(() => []),
             ]);
+            const sortedPageViews = [...pageViews].sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
             const deviceBreakdown = {};
             const browserBreakdown = {};
-            pageViews.forEach((pv) => {
+            const pageBreakdown = {};
+            sortedPageViews.forEach((pv) => {
                 const device = pv.deviceType || 'Desktop';
                 const browser = pv.browser || 'Chrome';
                 deviceBreakdown[device] = (deviceBreakdown[device] || 0) + 1;
                 browserBreakdown[browser] = (browserBreakdown[browser] || 0) + 1;
+                const path = pv.pagePath || '/';
+                pageBreakdown[path] = (pageBreakdown[path] || 0) + 1;
             });
             return {
                 isConnected: true,
@@ -111,7 +115,16 @@ let AnalyticsService = AnalyticsService_1 = class AnalyticsService {
                     totalSearchEvents: searchEvents.length,
                     deviceBreakdown,
                     browserBreakdown,
-                    latestPageViews: pageViews.slice(0, 15),
+                    topPages: Object.entries(pageBreakdown)
+                        .map(([path, views]) => ({ path, views }))
+                        .sort((a, b) => b.views - a.views)
+                        .slice(0, 5),
+                    activity: {
+                        daily: this.groupPageViews(sortedPageViews, 'day'),
+                        monthly: this.groupPageViews(sortedPageViews, 'month'),
+                        yearly: this.groupPageViews(sortedPageViews, 'year'),
+                    },
+                    latestPageViews: sortedPageViews.slice(0, 15),
                     latestHotelViews: hotelViews.slice(0, 10),
                     latestSearchEvents: searchEvents.slice(0, 10),
                     latestSessions: sessions.slice(0, 10),
@@ -128,11 +141,67 @@ let AnalyticsService = AnalyticsService_1 = class AnalyticsService {
         if (!db)
             return [];
         try {
-            return await db.collection('page_views').find({}, { limit: 200 }).toArray();
+            return await db.collection('page_views').find({ source: 'travel-main' }, { limit: 200 }).toArray();
         }
         catch (error) {
             this.logger.error(`Error fetching page views: ${error.message}`);
             return [];
+        }
+    }
+    groupPageViews(pageViews, interval) {
+        const counts = new Map();
+        for (const pageView of pageViews) {
+            const date = new Date(pageView.timestamp || pageView.date);
+            if (Number.isNaN(date.getTime()))
+                continue;
+            const key = interval === 'day'
+                ? date.toISOString().slice(0, 10)
+                : interval === 'month'
+                    ? date.toISOString().slice(0, 7)
+                    : String(date.getUTCFullYear());
+            counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        return [...counts.entries()]
+            .map(([label, views]) => ({ label, views }))
+            .sort((a, b) => a.label.localeCompare(b.label))
+            .slice(-12);
+    }
+    async recordPageView(event) {
+        const db = this.cassandraService.getDb();
+        if (!db) {
+            return { success: false, message: 'Cassandra database is not connected.' };
+        }
+        const pagePath = typeof event.pagePath === 'string' ? event.pagePath.slice(0, 500) : '/';
+        const visitorId = typeof event.visitorId === 'string' ? event.visitorId.slice(0, 120) : 'anonymous';
+        const sessionId = typeof event.sessionId === 'string' ? event.sessionId.slice(0, 120) : 'unknown';
+        const timestamp = new Date().toISOString();
+        const eventId = this.cassandraService.generateUuid();
+        const deviceType = typeof event.deviceType === 'string' ? event.deviceType.slice(0, 40) : 'Unknown';
+        const browser = typeof event.browser === 'string' ? event.browser.slice(0, 80) : 'Unknown';
+        const referrer = typeof event.referrer === 'string' ? event.referrer.slice(0, 500) : 'Direct';
+        try {
+            await db.collection('page_views').insertOne({
+                _id: eventId,
+                eventId,
+                pagePath,
+                visitorId,
+                sessionId,
+                deviceType,
+                browser,
+                referrer,
+                source: 'travel-main',
+                timestamp,
+                date: timestamp.slice(0, 10),
+            });
+            await Promise.all([
+                db.collection('visitors').updateOne({ _id: visitorId }, { $set: { visitorId, lastSeen: timestamp, source: 'travel-main' }, $setOnInsert: { firstSeen: timestamp } }, { upsert: true }),
+                db.collection('sessions').updateOne({ _id: sessionId }, { $set: { sessionId, visitorId, lastSeen: timestamp, source: 'travel-main' }, $setOnInsert: { firstSeen: timestamp } }, { upsert: true }),
+            ]);
+            return { success: true, eventId, timestamp };
+        }
+        catch (error) {
+            this.logger.error(`Error recording page view: ${error.message}`);
+            return { success: false, message: 'Unable to record page view.' };
         }
     }
     async getVisitors() {
@@ -140,7 +209,7 @@ let AnalyticsService = AnalyticsService_1 = class AnalyticsService {
         if (!db)
             return [];
         try {
-            return await db.collection('visitors').find({}, { limit: 200 }).toArray();
+            return await db.collection('visitors').find({ source: 'travel-main' }, { limit: 200 }).toArray();
         }
         catch (error) {
             this.logger.error(`Error fetching visitors: ${error.message}`);
@@ -170,73 +239,6 @@ let AnalyticsService = AnalyticsService_1 = class AnalyticsService {
             this.logger.error(`Error fetching hotel views: ${error.message}`);
             return [];
         }
-    }
-    async seedDemoData() {
-        const db = this.cassandraService.getDb();
-        if (!db) {
-            return { success: false, message: 'Cassandra database is not connected.' };
-        }
-        const pages = ['/', '/hotels', '/hotels/solara-bangkok', '/hotels/hua-hin-family', '/checkout', '/user/profile'];
-        const devices = ['Desktop', 'Mobile', 'Tablet'];
-        const browsers = ['Chrome 128', 'Safari 18', 'Firefox 130', 'Edge 128'];
-        const locations = ['Bangkok Riverside', 'Hua Hin Beach', 'Phuket Island', 'Chiang Mai City', 'Pattaya Beach'];
-        const hotels = ['Solara Bangkok Riverside', 'Hua Hin Family Cabana', 'Phuket Lagoon Villas'];
-        const referrers = ['https://google.com', 'https://facebook.com', 'Direct', 'https://tripadvisor.com'];
-        const timestamp = new Date().toISOString();
-        const dateStr = timestamp.split('T')[0];
-        const insertedItems = [];
-        for (let i = 0; i < 5; i++) {
-            const eventId = this.cassandraService.generateUuid();
-            const visitorId = `vis_${Math.floor(100 + Math.random() * 900)}`;
-            const sessionId = `sess_${Math.floor(1000 + Math.random() * 9000)}`;
-            const pagePath = pages[Math.floor(Math.random() * pages.length)];
-            const deviceType = devices[Math.floor(Math.random() * devices.length)];
-            const browser = browsers[Math.floor(Math.random() * browsers.length)];
-            const searchLocation = locations[Math.floor(Math.random() * locations.length)];
-            const hotelName = hotels[Math.floor(Math.random() * hotels.length)];
-            const referrer = referrers[Math.floor(Math.random() * referrers.length)];
-            await db.collection('page_views').insertOne({
-                _id: eventId,
-                eventId,
-                pagePath,
-                visitorId,
-                sessionId,
-                deviceType,
-                browser,
-                os: deviceType === 'Mobile' ? 'iOS' : 'Windows 11',
-                referrer,
-                timestamp,
-                date: dateStr,
-            });
-            await db.collection('visitors').updateOne({ _id: visitorId }, { $set: { visitorId, lastSeen: timestamp }, $setOnInsert: { firstSeen: timestamp } }, { upsert: true });
-            await db.collection('search_events').insertOne({
-                _id: `srch_${eventId}`,
-                eventId: `srch_${eventId}`,
-                searchLocation,
-                checkInDate: '2026-11-01',
-                checkOutDate: '2026-11-03',
-                visitorId,
-                sessionId,
-                timestamp,
-                date: dateStr,
-            });
-            await db.collection('hotel_views').insertOne({
-                _id: `htl_${eventId}`,
-                eventId: `htl_${eventId}`,
-                hotelId: hotelName,
-                visitorId,
-                sessionId,
-                pagePath,
-                timestamp,
-                date: dateStr,
-            });
-            insertedItems.push({ eventId, pagePath, visitorId, deviceType });
-        }
-        return {
-            success: true,
-            message: 'Generated 5 synthetic real-time telemetry events in Cassandra Astra DB!',
-            sample: insertedItems,
-        };
     }
 };
 exports.AnalyticsService = AnalyticsService;
